@@ -29,6 +29,19 @@ namespace ReactorCoreSim.Scripts.Models
         public bool IsPostShutdown { get; init; }
         public double ControlRodReactivity { get; init; }
         public double SimulationSpeed { get; init; }
+        public double SeismicMagnitudeG { get; init; }
+        public double SeismicPeakG { get; init; }
+        public int SeismicEventLevel { get; init; }
+        public bool SeismicTripTriggered { get; init; }
+        public double SeismicTripTimestamp { get; init; }
+        public double HydraulicScramProgress { get; init; }
+        public int HydraulicTripState { get; init; }
+        public double HydraulicPressureMPa { get; init; }
+        public bool AllRodsFullyInserted { get; init; }
+        public double HydraulicTimeSinceTrip { get; init; }
+        public int AccidentCause { get; init; }
+        public bool UiLocked { get; init; }
+        public bool ContainmentWarningActive { get; init; }
     }
 
     public class ControlCommand
@@ -42,7 +55,10 @@ namespace ReactorCoreSim.Scripts.Models
             SetPressure,
             Scram,
             Reset,
-            SetSimulationSpeed
+            SetSimulationSpeed,
+            InjectSeismicEvent,
+            InjectSeismicHexData,
+            AcknowledgeAccident
         }
 
         public CommandType Type { get; }
@@ -110,7 +126,20 @@ namespace ReactorCoreSim.Scripts.Systems
                 TimeSinceShutdown = 0.0,
                 IsPostShutdown = false,
                 ControlRodReactivity = 0.0,
-                SimulationSpeed = 1.0
+                SimulationSpeed = 1.0,
+                SeismicMagnitudeG = 0.0,
+                SeismicPeakG = 0.0,
+                SeismicEventLevel = 0,
+                SeismicTripTriggered = false,
+                SeismicTripTimestamp = 0.0,
+                HydraulicScramProgress = 0.0,
+                HydraulicTripState = 0,
+                HydraulicPressureMPa = 12.5,
+                AllRodsFullyInserted = false,
+                HydraulicTimeSinceTrip = 0.0,
+                AccidentCause = 99,
+                UiLocked = false,
+                ContainmentWarningActive = false
             };
         }
 

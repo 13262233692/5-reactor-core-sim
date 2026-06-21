@@ -17,12 +17,20 @@ namespace ReactorCoreSim.Scripts
         private DnbrWarningOverlay? _dnbrWarning;
         private HelpPanel? _helpPanel;
 
+        private ContainmentWarningOverlay? _containmentOverlay;
+        private AccidentTraceDialog? _accidentDialog;
+
         private SimulationSnapshot _latestSnapshot;
         private double _updateAccumulator;
         private const double UpdateInterval = 1.0 / 30.0;
 
         private Label? _statusLabel;
         private Label? _speedLabel;
+        private Button? _pauseBtn;
+        private Button? _scramBtn;
+        private Button? _tempModeBtn;
+        private Button? _dnbrModeBtn;
+        private Button? _paletteBtn;
         private bool _paused = false;
 
         private double _alertCooldownTimer;
@@ -30,6 +38,23 @@ namespace ReactorCoreSim.Scripts
         private bool _wasScram;
         private double _prevMinDnbr;
         private AlertAudioManager? _audioManager;
+
+        private bool _containmentActive;
+        private bool _uiLocked;
+        private bool _accidentDialogShown;
+        private bool _wasContainmentActive;
+
+        private double _scramPeakSeismic;
+        private double _scramTime;
+        private double _scramPowerMW;
+        private double _scramDnbr;
+        private double _scramPressure;
+        private double _scramInletTemp;
+        private double _scramRodDepth;
+        private double _scramFlow;
+        private double _scramXenon;
+        private int _scramCauseCode;
+        private bool _scramWasAutomatic;
 
         public override void _Ready()
         {
@@ -47,7 +72,14 @@ namespace ReactorCoreSim.Scripts
             _latestSnapshot = _bus.GetLatestSnapshot();
             _prevMinDnbr = 10.0;
             _wasScram = false;
+            _wasContainmentActive = false;
             _alertCooldownTimer = 0.0;
+            _containmentActive = false;
+            _uiLocked = false;
+            _accidentDialogShown = false;
+
+            _physicsEngine.OnSeismicTrip += HandlePhysicsSeismicTrip;
+            _physicsEngine.OnAccidentTripRecorded += HandleAccidentTripRecorded;
 
             try
             {
@@ -104,6 +136,9 @@ namespace ReactorCoreSim.Scripts
 
             _helpPanel = new HelpPanel();
             AddChild(_helpPanel);
+
+            _containmentOverlay = new ContainmentWarningOverlay();
+            AddChild(_containmentOverlay);
 
             SetupBottomBar();
         }
@@ -162,6 +197,7 @@ namespace ReactorCoreSim.Scripts
                 ToggleMode = true,
                 ButtonPressed = true
             };
+            _tempModeBtn = tempModeBtn;
             tempModeBtn.Pressed += () =>
             {
                 if (_coreTileMap != null)
@@ -176,6 +212,7 @@ namespace ReactorCoreSim.Scripts
                 Text = "DNBR",
                 ToggleMode = true
             };
+            _dnbrModeBtn = dnbrModeBtn;
             dnbrModeBtn.Pressed += () =>
             {
                 if (_coreTileMap != null)
@@ -189,6 +226,7 @@ namespace ReactorCoreSim.Scripts
             {
                 Text = "配色方案"
             };
+            _paletteBtn = paletteBtn;
             paletteBtn.Pressed += () =>
             {
                 _coreTileMap?.CycleColorMode();
@@ -199,8 +237,11 @@ namespace ReactorCoreSim.Scripts
             {
                 Text = "暂停"
             };
+            _pauseBtn = pauseBtn;
             pauseBtn.Pressed += () =>
             {
+                if (_uiLocked) return;
+
                 _paused = !_paused;
                 if (_physicsEngine != null)
                 {
@@ -232,8 +273,10 @@ namespace ReactorCoreSim.Scripts
             {
                 Text = "紧急停堆"
             };
+            _scramBtn = scramBtn;
             scramBtn.Pressed += () =>
             {
+                if (_uiLocked) return;
                 _bus?.SendCommand(new ControlCommand(ControlCommand.CommandType.Scram));
                 PlayAlertSafe(AlertSoundType.Scram);
             };
@@ -252,6 +295,47 @@ namespace ReactorCoreSim.Scripts
                     Array.ConvertAll(initialSnapshot.Value.ControlRodPositions, x => (float)x)
                 );
             }
+        }
+
+        private void HandlePhysicsSeismicTrip(double peakMag, double tripTime)
+        {
+            CallDeferred(MethodName.ActivateContainmentWarning, peakMag, tripTime);
+        }
+
+        private void HandleAccidentTripRecorded(int causeCode, double powerMW, double dnbr,
+            double pressure, double inletTemp, double rodDepth, double flow,
+            double xenon, double simTime, bool isAutomatic)
+        {
+            _scramCauseCode = causeCode;
+            _scramPowerMW = powerMW;
+            _scramDnbr = dnbr;
+            _scramPressure = pressure;
+            _scramInletTemp = inletTemp;
+            _scramRodDepth = rodDepth;
+            _scramFlow = flow;
+            _scramXenon = xenon;
+            _scramTime = simTime;
+            _scramWasAutomatic = isAutomatic;
+        }
+
+        public void ActivateContainmentWarning(double peakMag, double tripTime)
+        {
+            _scramPeakSeismic = peakMag;
+            _containmentOverlay?.Activate(peakMag, tripTime, _latestSnapshot.Time);
+            _containmentActive = true;
+            _uiLocked = true;
+            _accidentDialogShown = false;
+            ApplyUiLock(true);
+            PlayAlertSafe(AlertSoundType.Scram);
+        }
+
+        private void ApplyUiLock(bool locked)
+        {
+            if (_pauseBtn != null) _pauseBtn.Disabled = locked;
+            if (_scramBtn != null) _scramBtn.Disabled = locked;
+            if (_tempModeBtn != null) _tempModeBtn.Disabled = locked;
+            if (_dnbrModeBtn != null) _dnbrModeBtn.Disabled = locked;
+            if (_paletteBtn != null) _paletteBtn.Disabled = locked;
         }
 
         public override void _Process(double delta)
@@ -285,12 +369,26 @@ namespace ReactorCoreSim.Scripts
 
         public override void _Input(InputEvent @event)
         {
+            if (_uiLocked)
+            {
+                if (@event is InputEventKey keyEvent && keyEvent.Pressed)
+                {
+                    if (keyEvent.Keycode == Key.H || keyEvent.Keycode == Key.Escape)
+                    {
+                        GetViewport().SetInputAsHandled();
+                        return;
+                    }
+                }
+                GetViewport().SetInputAsHandled();
+                return;
+            }
+
             base._Input(@event);
             _inputSystem?.ProcessInput(@event, GetProcessDeltaTime());
 
-            if (@event is InputEventKey keyEvent && keyEvent.Pressed)
+            if (@event is InputEventKey keyEvent2 && keyEvent2.Pressed)
             {
-                HandleKeyPress(keyEvent);
+                HandleKeyPress(keyEvent2);
             }
         }
 
@@ -318,6 +416,7 @@ namespace ReactorCoreSim.Scripts
             _latestSnapshot = _bus.GetLatestSnapshot();
 
             CheckAlertTransitions();
+            CheckContainmentTransitions();
 
             _coreTileMap?.UpdateSnapshot(_latestSnapshot);
             _parameterPanel?.UpdateDisplay(_latestSnapshot);
@@ -326,8 +425,102 @@ namespace ReactorCoreSim.Scripts
             UpdateSpeedLabel();
             UpdateStatusLabel();
 
+            if (_containmentOverlay != null && _containmentOverlay.IsActive)
+            {
+                _containmentOverlay.UpdateSimTime(_latestSnapshot.Time);
+                _containmentOverlay.UpdateMagnitude(_latestSnapshot.SeismicPeakG);
+            }
+
             _prevMinDnbr = _latestSnapshot.MinimumDnbr;
             _wasScram = _latestSnapshot.IsScram;
+            _wasContainmentActive = _latestSnapshot.ContainmentWarningActive;
+        }
+
+        private void CheckContainmentTransitions()
+        {
+            bool snapshotContainment = _latestSnapshot.ContainmentWarningActive;
+            bool snapshotUiLocked = _latestSnapshot.UiLocked;
+
+            if (snapshotContainment && !_containmentActive)
+            {
+                double peakMag = _latestSnapshot.SeismicPeakG;
+                if (peakMag <= 0) peakMag = _scramPeakSeismic > 0 ? _scramPeakSeismic : 0.16;
+
+                _scramPeakSeismic = Math.Max(_scramPeakSeismic, peakMag);
+                ActivateContainmentWarning(peakMag, _latestSnapshot.SeismicTripTimestamp);
+            }
+
+            if (snapshotUiLocked && !_uiLocked)
+            {
+                _uiLocked = true;
+                ApplyUiLock(true);
+            }
+
+            if (_containmentActive && !_accidentDialogShown && _latestSnapshot.IsScram)
+            {
+                ShowAccidentTraceDialog();
+            }
+
+            if (_accidentDialog != null && IsInstanceValid(_accidentDialog))
+            {
+                _accidentDialog.UpdateRodStatus(
+                    _latestSnapshot.AllRodsFullyInserted,
+                    _latestSnapshot.HydraulicTimeSinceTrip
+                );
+            }
+        }
+
+        private void ShowAccidentTraceDialog()
+        {
+            if (_accidentDialogShown || _accidentDialog != null) return;
+
+            _accidentDialog = new AccidentTraceDialog();
+            _accidentDialog.AccidentAcknowledged += OnAccidentAcknowledged;
+            _accidentDialog.LogExportRequested += OnLogExportRequested;
+
+            var record = new AccidentTraceRecord
+            {
+                EventTimestamp = DateTime.Now,
+                SimulationTime = _latestSnapshot.Time,
+                RootCause = (AccidentCause)_scramCauseCode,
+                PeakSeismicMagnitudeG = Math.Max(_scramPeakSeismic, _latestSnapshot.SeismicPeakG),
+                MinDnbrAtTrip = _scramDnbr > 0 ? _scramDnbr : _latestSnapshot.MinimumDnbr,
+                PowerAtTripMW = _scramPowerMW > 0 ? _scramPowerMW : _latestSnapshot.TotalPower * 1e3,
+                PressureAtTripMPa = _scramPressure > 0 ? _scramPressure : _latestSnapshot.CoolantPressure / 1e6,
+                InletTempAtTrip = _scramInletTemp > 0 ? _scramInletTemp : _latestSnapshot.InletTemperature,
+                RodInsertionAtTrip = _scramRodDepth,
+                FlowRateKgs = _scramFlow > 0 ? _scramFlow : _latestSnapshot.MassFlowRate,
+                XenonReactivityAtTrip = _scramXenon,
+                WasAutomaticTrip = _scramWasAutomatic,
+                Acknowledged = false,
+                RodsFullyInserted = _latestSnapshot.AllRodsFullyInserted,
+                TimeToFullInsertionSec = _latestSnapshot.HydraulicTimeSinceTrip
+            };
+
+            AddChild(_accidentDialog);
+            _accidentDialog.PopupCentered();
+            _accidentDialog.SetAccidentRecord(record, _latestSnapshot.AllRodsFullyInserted);
+
+            _accidentDialogShown = true;
+        }
+
+        private void OnAccidentAcknowledged(AccidentTraceRecord record)
+        {
+            GD.Print($"[事故确认] {record.EventTimestamp:HH:mm:ss} 根因={record.RootCause} " +
+                     $"峰值={record.PeakSeismicMagnitudeG:F3}g 操作员={record.OperatorName}");
+
+            _bus?.SendCommand(new ControlCommand(ControlCommand.CommandType.AcknowledgeAccident));
+
+            if (_containmentOverlay != null)
+            {
+                _containmentOverlay.Deactivate();
+            }
+            _containmentActive = false;
+        }
+
+        private void OnLogExportRequested(AccidentTraceRecord record)
+        {
+            GD.Print("[事故日志导出]\n" + record.FormatForLog());
         }
 
         private void CheckAlertTransitions()

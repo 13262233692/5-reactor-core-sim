@@ -147,6 +147,21 @@ namespace ReactorCoreSim.Scripts.Systems
                         ControlCommand.CommandType.SetInletTemperature,
                         Math.Clamp(newTemp2, 200.0, 300.0)));
                     break;
+
+                case Key.F7:
+                    _bus.SendCommand(new ControlCommand(
+                        ControlCommand.CommandType.InjectSeismicEvent, 0.10, 8));
+                    break;
+
+                case Key.F8:
+                    _bus.SendCommand(new ControlCommand(
+                        ControlCommand.CommandType.InjectSeismicEvent, 0.20, 10));
+                    break;
+
+                case Key.F9:
+                    _bus.SendCommand(new ControlCommand(
+                        ControlCommand.CommandType.InjectSeismicEvent, 0.35, 12));
+                    break;
             }
         }
 

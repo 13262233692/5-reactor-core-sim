@@ -24,6 +24,13 @@ namespace ReactorCoreSim.Scripts.UI
         private Label? _xenonRhoLabel;
         private Label? _timeSinceShutdownLabel;
         private Label? _speedLabel;
+        private Label? _seismicMagLabel;
+        private Label? _seismicPeakLabel;
+        private Label? _seismicLevelLabel;
+        private Label? _hydraulicProgressLabel;
+        private Label? _hydraulicStateLabel;
+        private Label? _hydraulicPressureLabel;
+        private Label? _accidentCauseLabel;
 
         private VBoxContainer? _mainContainer;
         private PanelContainer? _panel;
@@ -88,6 +95,21 @@ namespace ReactorCoreSim.Scripts.UI
             {
                 _rodLabels[i] = CreateParameterRow(rodNames[i], "0 %");
             }
+
+            AddSeparator();
+            AddHeader("地震监测");
+
+            _seismicMagLabel = CreateParameterRow("当前加速度", "0.000g");
+            _seismicPeakLabel = CreateParameterRow("峰值加速度", "0.000g");
+            _seismicLevelLabel = CreateParameterRow("震级状态", "正常");
+
+            AddSeparator();
+            AddHeader("液压停堆系统");
+
+            _hydraulicStateLabel = CreateParameterRow("系统状态", "正常");
+            _hydraulicProgressLabel = CreateParameterRow("插入进度", "0.0 %");
+            _hydraulicPressureLabel = CreateParameterRow("液压压力", "12.5 MPa");
+            _accidentCauseLabel = CreateParameterRow("事故根因", "无");
         }
 
         private void AddHeader(string text)
@@ -262,6 +284,133 @@ namespace ReactorCoreSim.Scripts.UI
                     _rodLabels[i].Modulate = GetRodColor(snapshot.ControlRodPositions[i]);
                 }
             }
+
+            if (_seismicMagLabel != null)
+            {
+                double mag = snapshot.SeismicMagnitudeG;
+                if (double.IsNaN(mag) || double.IsInfinity(mag)) mag = 0.0;
+                _seismicMagLabel.Text = $"{mag:F3}g";
+                _seismicMagLabel.Modulate = GetSeismicColor(mag);
+            }
+
+            if (_seismicPeakLabel != null)
+            {
+                double peak = snapshot.SeismicPeakG;
+                if (double.IsNaN(peak) || double.IsInfinity(peak)) peak = 0.0;
+                _seismicPeakLabel.Text = $"{peak:F3}g";
+                _seismicPeakLabel.Modulate = GetSeismicColor(peak);
+            }
+
+            if (_seismicLevelLabel != null)
+            {
+                _seismicLevelLabel.Text = GetSeismicLevelText(snapshot.SeismicEventLevel);
+                _seismicLevelLabel.Modulate = GetSeismicLevelColor(snapshot.SeismicEventLevel);
+            }
+
+            if (_hydraulicStateLabel != null)
+            {
+                _hydraulicStateLabel.Text = GetHydraulicStateText(snapshot.HydraulicTripState);
+                _hydraulicStateLabel.Modulate = GetHydraulicStateColor(snapshot.HydraulicTripState);
+            }
+
+            if (_hydraulicProgressLabel != null)
+            {
+                double prog = snapshot.HydraulicScramProgress * 100.0;
+                if (double.IsNaN(prog) || double.IsInfinity(prog)) prog = 0.0;
+                _hydraulicProgressLabel.Text = $"{prog:F1} %";
+                _hydraulicProgressLabel.Modulate = snapshot.AllRodsFullyInserted
+                    ? new Color(0.4f, 1f, 0.4f)
+                    : snapshot.HydraulicTripState > 0
+                        ? new Color(1f, 0.7f, 0.3f)
+                        : new Color(0.5f, 0.7f, 1f);
+            }
+
+            if (_hydraulicPressureLabel != null)
+            {
+                double p = snapshot.HydraulicPressureMPa;
+                if (double.IsNaN(p) || double.IsInfinity(p)) p = 12.5;
+                _hydraulicPressureLabel.Text = $"{p:F2} MPa";
+            }
+
+            if (_accidentCauseLabel != null)
+            {
+                _accidentCauseLabel.Text = GetAccidentCauseText(snapshot.AccidentCause);
+                _accidentCauseLabel.Modulate = snapshot.AccidentCause != 99
+                    ? new Color(1f, 0.4f, 0.4f)
+                    : new Color(0.5f, 1f, 0.6f);
+            }
+        }
+
+        private static Color GetSeismicColor(double g)
+        {
+            return g switch
+            {
+                >= 0.15 => new Color(1f, 0.2f, 0.2f),
+                >= 0.08 => new Color(1f, 0.6f, 0.2f),
+                >= 0.04 => new Color(1f, 1f, 0.3f),
+                > 0.005 => new Color(0.7f, 1f, 0.7f),
+                _ => new Color(0.5f, 0.7f, 1f)
+            };
+        }
+
+        private static string GetSeismicLevelText(int level)
+        {
+            return level switch
+            {
+                4 => "安全停堆",
+                3 => "触发停堆",
+                2 => "警报级",
+                1 => "通告级",
+                _ => "正常"
+            };
+        }
+
+        private static Color GetSeismicLevelColor(int level)
+        {
+            return level switch
+            {
+                >= 3 => new Color(1f, 0.3f, 0.3f),
+                2 => new Color(1f, 0.6f, 0.2f),
+                1 => new Color(1f, 1f, 0.3f),
+                _ => new Color(0.5f, 1f, 0.6f)
+            };
+        }
+
+        private static string GetHydraulicStateText(int state)
+        {
+            return state switch
+            {
+                5 => "紧急安全",
+                4 => "棒束到位",
+                3 => "下落中",
+                2 => "锁闩释放",
+                1 => "启动释能",
+                _ => "待机"
+            };
+        }
+
+        private static Color GetHydraulicStateColor(int state)
+        {
+            return state switch
+            {
+                >= 4 => new Color(0.4f, 1f, 0.4f),
+                >= 2 => new Color(1f, 0.7f, 0.3f),
+                1 => new Color(1f, 0.5f, 0.2f),
+                _ => new Color(0.5f, 0.7f, 1f)
+            };
+        }
+
+        private static string GetAccidentCauseText(int cause)
+        {
+            return cause switch
+            {
+                0 => "地震触发自动停堆",
+                1 => "操作员手动停堆",
+                2 => "DNBR越限",
+                3 => "压力超限",
+                4 => "温度超限",
+                _ => "无事故"
+            };
         }
 
         private static string FormatTime(double seconds)

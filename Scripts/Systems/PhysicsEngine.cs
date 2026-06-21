@@ -18,12 +18,15 @@ namespace ReactorCoreSim.Scripts.Systems
         private ISignalFilter? _flowFilter;
         private FlowNoiseGenerator? _flowNoise;
         private XenonKineticsSolver? _xenon;
+        private SeismicMonitor? _seismic;
+        private HydraulicScramSystem? _hydraulic;
 
         private double _simulationTime;
         private double _simulationSpeed;
         private double _targetReactivity;
         private double _controlRodReactivity;
         private double _xenonReactivity;
+        private double _hydraulicReactivity;
         private double _currentReactivity;
         private double[] _controlRodPositions;
         private double _nominalFlowRate;
@@ -31,8 +34,20 @@ namespace ReactorCoreSim.Scripts.Systems
         private double _inletTemperature;
         private double _coolantPressure;
         private bool _isScram;
+        private int _scramCause;
+        private double _scramPowerMW;
+        private double _scramDnbr;
+        private double _scramPressure;
+        private double _scramInletTemp;
+        private double _scramRodDepth;
+        private double _scramFlow;
+        private double _scramXenon;
+        private bool _scramWasAutomatic;
         private double _timeSinceShutdown;
         private bool _isPostShutdown;
+        private bool _uiLocked;
+        private bool _containmentWarning;
+        private bool _accidentAcknowledged;
 
         private const double MaxSimulationSpeed = 200.0;
         private const double MinSimulationSpeed = 0.01;
@@ -43,6 +58,13 @@ namespace ReactorCoreSim.Scripts.Systems
         public bool IsPaused => _paused;
         public double SimulationTime => _simulationTime;
         public double SimulationSpeed => _simulationSpeed;
+        public SeismicMonitor? Seismic => _seismic;
+        public HydraulicScramSystem? Hydraulic => _hydraulic;
+        public int ScramCause => _scramCause;
+        public bool UiLocked => _uiLocked;
+
+        public event Action<double, double>? OnSeismicTrip;
+        public event Action<int, double, double, double, double, double, double, double, double, bool>? OnAccidentTripRecorded;
 
         public PhysicsEngine(MessageBus bus)
         {
@@ -54,6 +76,7 @@ namespace ReactorCoreSim.Scripts.Systems
             _targetReactivity = 0.0;
             _controlRodReactivity = 0.0;
             _xenonReactivity = 0.0;
+            _hydraulicReactivity = 0.0;
             _currentReactivity = 0.0;
             _controlRodPositions = new double[4];
             _nominalFlowRate = 18400.0;
@@ -61,8 +84,20 @@ namespace ReactorCoreSim.Scripts.Systems
             _inletTemperature = 292.0;
             _coolantPressure = 15.5e6;
             _isScram = false;
+            _scramCause = 99;
+            _scramPowerMW = 0.0;
+            _scramDnbr = 10.0;
+            _scramPressure = 15.5;
+            _scramInletTemp = 292.0;
+            _scramRodDepth = 0.0;
+            _scramFlow = 18400.0;
+            _scramXenon = 0.0;
+            _scramWasAutomatic = false;
             _timeSinceShutdown = 0.0;
             _isPostShutdown = false;
+            _uiLocked = false;
+            _containmentWarning = false;
+            _accidentAcknowledged = false;
             _physicsUpdateRate = 100.0;
         }
 
@@ -86,6 +121,7 @@ namespace ReactorCoreSim.Scripts.Systems
         public void Stop()
         {
             _running = false;
+            _seismic?.Stop();
             _thread?.Join(1000);
         }
 
@@ -97,6 +133,61 @@ namespace ReactorCoreSim.Scripts.Systems
         public void Resume()
         {
             _paused = false;
+        }
+
+        private void HandleSeismicTrip(SeismicReading reading)
+        {
+            if (_isScram) return;
+
+            double peakMag = reading.Magnitude;
+            double tripTime = _simulationTime;
+
+            try { OnSeismicTrip?.Invoke(peakMag, tripTime); }
+            catch { }
+
+            PerformAccidentTrip(0, true);
+        }
+
+        private void PerformAccidentTrip(int causeCode, bool isAutomatic)
+        {
+            if (_isScram) return;
+
+            _scramCause = causeCode;
+            _scramPowerMW = _kinetics != null ? _kinetics.Power * 1e3 : 0.0;
+            _scramDnbr = _core != null ? _core.MinimumDnbr : 10.0;
+            _scramPressure = _coolantPressure / 1e6;
+            _scramInletTemp = _inletTemperature;
+            double avgRod = 0.0;
+            for (int i = 0; i < 4; i++) avgRod += _controlRodPositions[i];
+            _scramRodDepth = avgRod / 4.0;
+            _scramFlow = _currentFlowRate;
+            _scramXenon = _xenonReactivity;
+            _scramWasAutomatic = isAutomatic;
+
+            try
+            {
+                OnAccidentTripRecorded?.Invoke(
+                    _scramCause,
+                    _scramPowerMW,
+                    _scramDnbr,
+                    _scramPressure,
+                    _scramInletTemp,
+                    _scramRodDepth,
+                    _scramFlow,
+                    _scramXenon,
+                    _simulationTime,
+                    _scramWasAutomatic
+                );
+            }
+            catch { }
+
+            _isScram = true;
+            _uiLocked = true;
+            _containmentWarning = true;
+
+            _hydraulic?.InitiateHydraulicTrip(_simulationTime);
+
+            _xenon?.SetShutdown();
         }
 
         private void Initialize()
@@ -112,6 +203,12 @@ namespace ReactorCoreSim.Scripts.Systems
             var xenonParams = XenonKineticsParameters.DefaultPwr();
             _xenon = new XenonKineticsSolver(xenonParams);
 
+            _seismic = new SeismicMonitor();
+            _seismic.OnSeismicTrip += HandleSeismicTrip;
+            _seismic.Start();
+
+            _hydraulic = new HydraulicScramSystem();
+
             _flowFilter = new CascadedFilter(
                 new FirstOrderLowPassFilter(0.5, _nominalFlowRate),
                 new MovingAverageFilter(10, _nominalFlowRate)
@@ -123,10 +220,16 @@ namespace ReactorCoreSim.Scripts.Systems
             _targetReactivity = 0.0;
             _controlRodReactivity = 0.0;
             _xenonReactivity = 0.0;
+            _hydraulicReactivity = 0.0;
             _currentReactivity = 0.0;
             _isScram = false;
+            _scramCause = 99;
+            _scramWasAutomatic = false;
             _timeSinceShutdown = 0.0;
             _isPostShutdown = false;
+            _uiLocked = false;
+            _containmentWarning = false;
+            _accidentAcknowledged = false;
 
             for (int i = 0; i < 4; i++)
             {
@@ -215,7 +318,7 @@ namespace ReactorCoreSim.Scripts.Systems
                         break;
 
                     case ControlCommand.CommandType.Scram:
-                        PerformScram();
+                        PerformAccidentTrip(1, false);
                         break;
 
                     case ControlCommand.CommandType.Reset:
@@ -224,6 +327,20 @@ namespace ReactorCoreSim.Scripts.Systems
 
                     case ControlCommand.CommandType.SetSimulationSpeed:
                         _simulationSpeed = Math.Max(MinSimulationSpeed, Math.Min(MaxSimulationSpeed, cmd.Value));
+                        break;
+
+                    case ControlCommand.CommandType.InjectSeismicEvent:
+                        double mag = cmd.Value;
+                        double dur = cmd.Index > 0 ? (double)cmd.Index : 5.0;
+                        _seismic?.TriggerSimulatedEarthquake(mag, dur);
+                        break;
+
+                    case ControlCommand.CommandType.InjectSeismicHexData:
+                        break;
+
+                    case ControlCommand.CommandType.AcknowledgeAccident:
+                        _accidentAcknowledged = true;
+                        _containmentWarning = false;
                         break;
                 }
             }
@@ -249,17 +366,7 @@ namespace ReactorCoreSim.Scripts.Systems
 
         private void PerformScram()
         {
-            _isScram = true;
-            for (int i = 0; i < 4; i++)
-            {
-                _controlRodPositions[i] = 1.0;
-            }
-            _core?.SetControlRodGroup(0, 1.0);
-            _core?.SetControlRodGroup(1, 1.0);
-            _core?.SetControlRodGroup(2, 1.0);
-            _core?.SetControlRodGroup(3, 1.0);
-            UpdateReactivityFromControlRods();
-            _xenon?.SetShutdown();
+            PerformAccidentTrip(1, false);
         }
 
         private void ResetSimulation()
@@ -271,14 +378,27 @@ namespace ReactorCoreSim.Scripts.Systems
             var xenonParams = XenonKineticsParameters.DefaultPwr();
             _xenon = new XenonKineticsSolver(xenonParams);
 
+            _seismic?.Stop();
+            _seismic = new SeismicMonitor();
+            _seismic.OnSeismicTrip += HandleSeismicTrip;
+            _seismic.Start();
+
+            _hydraulic = new HydraulicScramSystem();
+
             _simulationTime = 0.0;
             _targetReactivity = 0.0;
             _controlRodReactivity = 0.0;
             _xenonReactivity = 0.0;
+            _hydraulicReactivity = 0.0;
             _currentReactivity = 0.0;
             _isScram = false;
+            _scramCause = 99;
+            _scramWasAutomatic = false;
             _timeSinceShutdown = 0.0;
             _isPostShutdown = false;
+            _uiLocked = false;
+            _containmentWarning = false;
+            _accidentAcknowledged = false;
             _currentFlowRate = _nominalFlowRate;
 
             for (int i = 0; i < 4; i++)
@@ -294,29 +414,50 @@ namespace ReactorCoreSim.Scripts.Systems
         {
             if (_kinetics == null || _thermal == null || _core == null || _xenon == null) return;
 
+            _seismic?.Update(dt, _simulationTime);
+            _hydraulic?.Update(dt, _simulationTime);
+
             double powerFraction = Math.Clamp(_kinetics.Power / NominalPower, 0.0, 10.0);
 
             _xenon.Step(dt, powerFraction);
             _xenonReactivity = SafeGetXenonReactivity(_xenon);
 
-            double targetTotalReactivity = _targetReactivity + _xenonReactivity;
+            _hydraulicReactivity = _hydraulic != null ? _hydraulic.GetScramReactivityWorth() : 0.0;
+            if (double.IsNaN(_hydraulicReactivity) || double.IsInfinity(_hydraulicReactivity))
+            {
+                _hydraulicReactivity = _isScram ? -0.30 : 0.0;
+            }
+
+            double targetTotalReactivity = _targetReactivity + _xenonReactivity + _hydraulicReactivity;
 
             double reactivityRate = 0.5;
             double reactivityDelta = targetTotalReactivity - _currentReactivity;
             double maxDelta = 0.01 * dt;
+
+            if (_isScram && _hydraulic != null)
+            {
+                maxDelta = 0.05 * dt;
+            }
+
             if (Math.Abs(reactivityDelta) > maxDelta)
             {
                 reactivityDelta = Math.Sign(reactivityDelta) * maxDelta;
             }
             _currentReactivity += reactivityRate * reactivityDelta;
 
-            double totalWorthLimit = 0.2;
+            double totalWorthLimit = 0.3;
             if (_currentReactivity < -totalWorthLimit) _currentReactivity = -totalWorthLimit;
             if (_currentReactivity > totalWorthLimit) _currentReactivity = totalWorthLimit;
 
             if (_isScram)
             {
-                _currentReactivity = Math.Min(_currentReactivity, -0.05);
+                _currentReactivity = Math.Min(_currentReactivity, -0.05 + _hydraulicReactivity);
+            }
+
+            if (_hydraulic != null && _hydraulic.AllRodsFullyInserted)
+            {
+                double finalRho = -0.25 + _xenonReactivity;
+                _currentReactivity = Math.Min(_currentReactivity, finalRho);
             }
 
             _kinetics.SetReactivity(_currentReactivity);
@@ -516,7 +657,20 @@ namespace ReactorCoreSim.Scripts.Systems
                 TimeSinceShutdown = timeSinceSd,
                 IsPostShutdown = postSd,
                 ControlRodReactivity = _controlRodReactivity,
-                SimulationSpeed = _simulationSpeed
+                SimulationSpeed = _simulationSpeed,
+                SeismicMagnitudeG = _seismic?.CurrentLevel == null ? 0.0 : (_seismic?.PeakMagnitude ?? 0.0),
+                SeismicPeakG = _seismic?.PeakMagnitude ?? 0.0,
+                SeismicEventLevel = (int)(_seismic?.CurrentLevel ?? 0),
+                SeismicTripTriggered = _seismic?.TripTriggered ?? false,
+                SeismicTripTimestamp = _seismic?.TripTimestamp ?? 0.0,
+                HydraulicScramProgress = _hydraulic?.TotalInsertionFraction ?? 0.0,
+                HydraulicTripState = (int)(_hydraulic?.TripState ?? 0),
+                HydraulicPressureMPa = _hydraulic?.HydraulicPressure ?? 12.5,
+                AllRodsFullyInserted = _hydraulic?.AllRodsFullyInserted ?? false,
+                HydraulicTimeSinceTrip = _hydraulic?.TimeSinceTrip ?? 0.0,
+                AccidentCause = _isScram ? _scramCause : 99,
+                UiLocked = _uiLocked,
+                ContainmentWarningActive = _containmentWarning
             };
 
             _bus.PublishSnapshot(snapshot);
