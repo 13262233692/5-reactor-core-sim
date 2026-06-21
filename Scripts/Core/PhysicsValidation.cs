@@ -25,6 +25,9 @@ namespace ReactorCoreSim.Scripts.Tests
             allPassed &= TestThermalHydraulics();
             Console.WriteLine();
 
+            allPassed &= TestXenonKinetics();
+            Console.WriteLine();
+
             Console.WriteLine(allPassed ? "✅ 所有测试通过" : "❌ 部分测试失败");
             return allPassed;
         }
@@ -290,6 +293,107 @@ namespace ReactorCoreSim.Scripts.Tests
                 else
                 {
                     Console.WriteLine("  ⚠️ DNBR < 1.0 - 超出安全限值");
+                }
+
+                return true;
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine($"  ❌ 异常: {e.Message}");
+                return false;
+            }
+        }
+
+        private static bool TestXenonKinetics()
+        {
+            Console.WriteLine("【氙毒动力学求解器测试】");
+
+            try
+            {
+                var parameters = XenonKineticsParameters.DefaultPwr();
+                var solver = new XenonKineticsSolver(parameters);
+
+                var initState = solver.State;
+                Console.WriteLine($"  初始碘-135浓度: {initState.IodineConcentration:E6}");
+                Console.WriteLine($"  初始氙-135浓度: {initState.XenonConcentration:E6}");
+                Console.WriteLine($"  初始氙毒反应性: {initState.XenonReactivityWorth * 1e5:F1} pcm");
+
+                double dt = 0.1;
+                for (int i = 0; i < 1000; i++)
+                {
+                    solver.Step(dt, 1.0);
+                }
+
+                var state100s = solver.State;
+                Console.WriteLine($"  100秒后碘浓度: {state100s.IodineConcentration:E6}");
+                Console.WriteLine($"  100秒后氙浓度: {state100s.XenonConcentration:E6}");
+                Console.WriteLine($"  100秒后氙毒反应性: {state100s.XenonReactivityWorth * 1e5:F1} pcm");
+
+                if (double.IsNaN(state100s.IodineConcentration) ||
+                    double.IsNaN(state100s.XenonConcentration) ||
+                    double.IsNaN(state100s.XenonReactivityWorth))
+                {
+                    Console.WriteLine("  ❌ 出现 NaN 值 - 数值不稳定");
+                    return false;
+                }
+
+                if (state100s.IodineConcentration < 0 ||
+                    state100s.XenonConcentration < 0)
+                {
+                    Console.WriteLine("  ❌ 浓度出现负值 - 符号位翻转");
+                    return false;
+                }
+
+                if (Math.Abs(state100s.XenonReactivityWorth) > 0.01)
+                {
+                    Console.WriteLine("  ❌ 氙毒反应性绝对值超限");
+                    return false;
+                }
+
+                Console.WriteLine("  ✅ 功率运行下氙毒计算稳定");
+
+                solver.SetShutdown();
+                double shutdownTime = 0;
+                double minReactivity = 0;
+                double peakTime = 0;
+
+                for (int i = 0; i < 10000; i++)
+                {
+                    solver.Step(dt, 0.0);
+                    shutdownTime += dt;
+                    if (solver.XenonReactivity < minReactivity)
+                    {
+                        minReactivity = solver.XenonReactivity;
+                        peakTime = shutdownTime;
+                    }
+                }
+
+                var postState = solver.State;
+                Console.WriteLine($"  停堆后氙坑峰值反应性: {minReactivity * 1e5:F1} pcm");
+                Console.WriteLine($"  氙坑峰值出现时间: {peakTime / 3600.0:F1} h");
+                Console.WriteLine($"  停堆状态标志: {postState.IsPostShutdown}");
+
+                if (double.IsNaN(postState.XenonConcentration) ||
+                    double.IsNaN(postState.IodineConcentration))
+                {
+                    Console.WriteLine("  ❌ 停堆后出现 NaN - 浮点下溢");
+                    return false;
+                }
+
+                if (postState.XenonConcentration <= 0)
+                {
+                    Console.WriteLine("  ❌ 停堆后氙浓度异常");
+                    return false;
+                }
+
+                Console.WriteLine("  ✅ 停堆后氙坑形成计算稳定");
+
+                double xenonPeak = solver.GetPostShutdownXenonPeakTime();
+                Console.WriteLine($"  理论氙坑峰值时间: {xenonPeak / 3600.0:F1} h");
+
+                if (double.IsNaN(xenonPeak) || double.IsInfinity(xenonPeak))
+                {
+                    Console.WriteLine("  ⚠️ 峰值时间计算异常 (已被保护)");
                 }
 
                 return true;

@@ -19,6 +19,11 @@ namespace ReactorCoreSim.Scripts.UI
         private Label? _pressureLabel;
         private Label? _doublingTimeLabel;
         private Label[]? _rodLabels;
+        private Label? _iodineLabel;
+        private Label? _xenonLabel;
+        private Label? _xenonRhoLabel;
+        private Label? _timeSinceShutdownLabel;
+        private Label? _speedLabel;
 
         private VBoxContainer? _mainContainer;
         private PanelContainer? _panel;
@@ -46,8 +51,9 @@ namespace ReactorCoreSim.Scripts.UI
             AddHeader("堆芯参数");
 
             _timeLabel = CreateParameterRow("仿真时间", "0.0 s");
+            _speedLabel = CreateParameterRow("仿真倍速", "1.0x");
             _powerLabel = CreateParameterRow("热功率", "0.0 %");
-            _reactivityLabel = CreateParameterRow("反应性", "0.000 pcm");
+            _reactivityLabel = CreateParameterRow("总反应性", "0.000 pcm");
             _doublingTimeLabel = CreateParameterRow("倍增时间", "-- s");
 
             AddSeparator();
@@ -59,6 +65,14 @@ namespace ReactorCoreSim.Scripts.UI
             _avgTempLabel = CreateParameterRow("平均温度", "0.0 °C");
             _peakCladLabel = CreateParameterRow("峰值包壳温度", "0.0 °C");
             _pressureLabel = CreateParameterRow("冷却剂压力", "0.0 MPa");
+
+            AddSeparator();
+            AddHeader("氙毒动力学");
+
+            _iodineLabel = CreateParameterRow("碘-135浓度", "--");
+            _xenonLabel = CreateParameterRow("氙-135浓度", "--");
+            _xenonRhoLabel = CreateParameterRow("氙毒反应性", "0.000 pcm");
+            _timeSinceShutdownLabel = CreateParameterRow("停堆后时间", "0.0 h");
 
             AddSeparator();
             AddHeader("安全参数");
@@ -126,6 +140,9 @@ namespace ReactorCoreSim.Scripts.UI
             if (_timeLabel != null)
                 _timeLabel.Text = FormatTime(snapshot.Time);
 
+            if (_speedLabel != null)
+                _speedLabel.Text = $"{snapshot.SimulationSpeed:F1}x";
+
             if (_powerLabel != null)
             {
                 double powerPercent = snapshot.TotalPower * 100.0;
@@ -138,6 +155,58 @@ namespace ReactorCoreSim.Scripts.UI
                 double pcm = snapshot.Reactivity * 1e5;
                 _reactivityLabel.Text = $"{pcm:F1} pcm";
                 _reactivityLabel.Modulate = GetReactivityColor(snapshot.Reactivity);
+            }
+
+            if (_iodineLabel != null)
+            {
+                if (snapshot.Iodine135Concentration > 1e-10)
+                {
+                    double ratio = snapshot.Iodine135Concentration > 0
+                        ? snapshot.Iodine135Concentration / 1e18
+                        : 0;
+                    _iodineLabel.Text = $"{ratio:F3} × 10¹⁸ m⁻³";
+                }
+                else
+                {
+                    _iodineLabel.Text = "< 10⁻¹⁰";
+                }
+            }
+
+            if (_xenonLabel != null)
+            {
+                if (snapshot.Xenon135Concentration > 1e-10)
+                {
+                    double ratio = snapshot.Xenon135Concentration > 0
+                        ? snapshot.Xenon135Concentration / 1e18
+                        : 0;
+                    _xenonLabel.Text = $"{ratio:F3} × 10¹⁸ m⁻³";
+                }
+                else
+                {
+                    _xenonLabel.Text = "< 10⁻¹⁰";
+                }
+            }
+
+            if (_xenonRhoLabel != null)
+            {
+                double pcm = snapshot.XenonReactivityWorth * 1e5;
+                _xenonRhoLabel.Text = $"{pcm:F1} pcm";
+                _xenonRhoLabel.Modulate = GetXenonReactivityColor(snapshot.XenonReactivityWorth);
+            }
+
+            if (_timeSinceShutdownLabel != null)
+            {
+                if (snapshot.IsPostShutdown)
+                {
+                    double hours = snapshot.TimeSinceShutdown / 3600.0;
+                    _timeSinceShutdownLabel.Text = $"{hours:F1} h";
+                    _timeSinceShutdownLabel.Modulate = new Color(1f, 0.6f, 0.4f);
+                }
+                else
+                {
+                    _timeSinceShutdownLabel.Text = "功率运行";
+                    _timeSinceShutdownLabel.Modulate = new Color(0.5f, 1f, 0.6f);
+                }
             }
 
             if (_doublingTimeLabel != null)
@@ -267,6 +336,18 @@ namespace ReactorCoreSim.Scripts.UI
                 > 0.5 => new Color(0.8f, 0.8f, 0.3f),
                 > 0.1 => new Color(0.5f, 0.8f, 0.5f),
                 _ => new Color(0.5f, 0.7f, 1f)
+            };
+        }
+
+        private static Color GetXenonReactivityColor(double rho)
+        {
+            double pcm = rho * 1e5;
+            return pcm switch
+            {
+                < -500 => new Color(1f, 0.3f, 0.3f),
+                < -200 => new Color(1f, 0.6f, 0.3f),
+                < -50 => new Color(1f, 1f, 0.4f),
+                _ => new Color(0.7f, 0.7f, 0.7f)
             };
         }
     }

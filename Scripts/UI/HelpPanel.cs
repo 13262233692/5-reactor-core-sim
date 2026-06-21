@@ -47,6 +47,7 @@ namespace ReactorCoreSim.Scripts.UI
             AddHelpRow(vbox, "+ / -", "增加/减少冷却剂流量");
             AddHelpRow(vbox, "I / K", "提高/降低入口温度");
             AddHelpRow(vbox, "1/2/3/4", "仿真速度 0.1x/1x/10x/50x");
+            AddHelpRow(vbox, "5/6", "仿真速度 120x/200x (氙坑模拟)");
             AddHelpRow(vbox, "Ctrl+R", "重置仿真");
             AddHelpRow(vbox, "H", "显示/隐藏帮助");
 

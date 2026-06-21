@@ -122,6 +122,16 @@ namespace ReactorCoreSim.Scripts.Systems
                         ControlCommand.CommandType.SetSimulationSpeed, 50.0));
                     break;
 
+                case Key.Digit5:
+                    _bus.SendCommand(new ControlCommand(
+                        ControlCommand.CommandType.SetSimulationSpeed, 120.0));
+                    break;
+
+                case Key.Digit6:
+                    _bus.SendCommand(new ControlCommand(
+                        ControlCommand.CommandType.SetSimulationSpeed, 200.0));
+                    break;
+
                 case Key.I:
                     var snap = _bus.GetLatestSnapshot();
                     double newTemp = snap.InletTemperature + _tempSpeed;

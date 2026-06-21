@@ -22,6 +22,13 @@ namespace ReactorCoreSim.Scripts.Models
         public FuelAssemblyState[] AssemblyStates { get; init; }
         public bool IsScram { get; init; }
         public double[] ControlRodPositions { get; init; }
+        public double Iodine135Concentration { get; init; }
+        public double Xenon135Concentration { get; init; }
+        public double XenonReactivityWorth { get; init; }
+        public double TimeSinceShutdown { get; init; }
+        public bool IsPostShutdown { get; init; }
+        public double ControlRodReactivity { get; init; }
+        public double SimulationSpeed { get; init; }
     }
 
     public class ControlCommand
@@ -96,7 +103,14 @@ namespace ReactorCoreSim.Scripts.Systems
                 DoublingTime = double.PositiveInfinity,
                 AssemblyStates = Array.Empty<FuelAssemblyState>(),
                 IsScram = false,
-                ControlRodPositions = new double[4]
+                ControlRodPositions = new double[4],
+                Iodine135Concentration = 0.0,
+                Xenon135Concentration = 0.0,
+                XenonReactivityWorth = 0.0,
+                TimeSinceShutdown = 0.0,
+                IsPostShutdown = false,
+                ControlRodReactivity = 0.0,
+                SimulationSpeed = 1.0
             };
         }
 

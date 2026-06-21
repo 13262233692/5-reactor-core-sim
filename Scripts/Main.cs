@@ -25,6 +25,12 @@ namespace ReactorCoreSim.Scripts
         private Label? _speedLabel;
         private bool _paused = false;
 
+        private double _alertCooldownTimer;
+        private const double AlertCooldown = 1.5;
+        private bool _wasScram;
+        private double _prevMinDnbr;
+        private AlertAudioManager? _audioManager;
+
         public override void _Ready()
         {
             base._Ready();
@@ -39,6 +45,19 @@ namespace ReactorCoreSim.Scripts
             _physicsEngine = new PhysicsEngine(_bus);
             _inputSystem = new InputSystem(_bus);
             _latestSnapshot = _bus.GetLatestSnapshot();
+            _prevMinDnbr = 10.0;
+            _wasScram = false;
+            _alertCooldownTimer = 0.0;
+
+            try
+            {
+                _audioManager = AlertAudioManager.Instance;
+                _audioManager.Initialize(this);
+            }
+            catch
+            {
+                _audioManager = null;
+            }
         }
 
         private void SetupUI()
@@ -216,6 +235,7 @@ namespace ReactorCoreSim.Scripts
             scramBtn.Pressed += () =>
             {
                 _bus?.SendCommand(new ControlCommand(ControlCommand.CommandType.Scram));
+                PlayAlertSafe(AlertSoundType.Scram);
             };
             scramBtn.AddThemeColorOverride("font_color", new Color(1f, 0.3f, 0.3f));
             hbox.AddChild(scramBtn);
@@ -241,6 +261,19 @@ namespace ReactorCoreSim.Scripts
             if (_bus == null) return;
 
             _inputSystem?.ProcessContinuousInput(delta);
+
+            if (_alertCooldownTimer > 0)
+            {
+                _alertCooldownTimer -= delta;
+            }
+
+            try
+            {
+                _audioManager?.CleanupStalePlayers();
+            }
+            catch
+            {
+            }
 
             _updateAccumulator += delta;
             if (_updateAccumulator >= UpdateInterval)
@@ -284,12 +317,61 @@ namespace ReactorCoreSim.Scripts
 
             _latestSnapshot = _bus.GetLatestSnapshot();
 
+            CheckAlertTransitions();
+
             _coreTileMap?.UpdateSnapshot(_latestSnapshot);
             _parameterPanel?.UpdateDisplay(_latestSnapshot);
             _dnbrWarning?.UpdateFromSnapshot(_latestSnapshot);
 
             UpdateSpeedLabel();
             UpdateStatusLabel();
+
+            _prevMinDnbr = _latestSnapshot.MinimumDnbr;
+            _wasScram = _latestSnapshot.IsScram;
+        }
+
+        private void CheckAlertTransitions()
+        {
+            if (_alertCooldownTimer > 0) return;
+
+            if (!_wasScram && _latestSnapshot.IsScram)
+            {
+                PlayAlertSafe(AlertSoundType.Scram);
+                _alertCooldownTimer = AlertCooldown * 2;
+                return;
+            }
+
+            if (_prevMinDnbr >= 1.3 && _latestSnapshot.MinimumDnbr < 1.3)
+            {
+                if (_latestSnapshot.MinimumDnbr < 1.1)
+                {
+                    PlayAlertSafe(AlertSoundType.Critical);
+                }
+                else
+                {
+                    PlayAlertSafe(AlertSoundType.Warning);
+                }
+                PlayAlertSafe(AlertSoundType.DnbrAlert);
+                _alertCooldownTimer = AlertCooldown;
+                return;
+            }
+
+            if (_prevMinDnbr >= 1.1 && _latestSnapshot.MinimumDnbr < 1.1)
+            {
+                PlayAlertSafe(AlertSoundType.Critical);
+                _alertCooldownTimer = AlertCooldown;
+            }
+        }
+
+        private void PlayAlertSafe(AlertSoundType type)
+        {
+            try
+            {
+                _audioManager?.PlayAlert(type);
+            }
+            catch
+            {
+            }
         }
 
         private void UpdateSpeedLabel()
@@ -334,6 +416,15 @@ namespace ReactorCoreSim.Scripts
         {
             base._ExitTree();
             _physicsEngine?.Stop();
+
+            try
+            {
+                _audioManager?.StopAllAlerts();
+                _audioManager?.Dispose();
+            }
+            catch
+            {
+            }
         }
     }
 }
