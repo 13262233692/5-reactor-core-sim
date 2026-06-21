@@ -1,0 +1,32 @@
+# Godot 4 生成的文件
+.import/
+export.cfg
+export_presets.cfg
+
+# C# 构建产物
+bin/
+obj/
+*.csproj.user
+*.sln.docstates
+.vs/
+.vscode/
+
+# Mono / .NET
+.mono/
+*.pidb
+*.booproj
+
+# 日志和缓存
+*.log
+*.import
+*.remap
+
+# 操作系统文件
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 临时文件
+*.tmp
+*.bak
+*~
